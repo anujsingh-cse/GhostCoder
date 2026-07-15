@@ -1,0 +1,22 @@
+team:
+  lead: backend-architect
+  reviewers:
+    - security-engineer
+    - reality-checker
+  specialists:
+    auth: security-engineer
+    perf: database-optimizer
+    deploy: devops-automator
+
+rules:
+  - pattern: "src/auth/"
+    agent: security-engineer
+    block_merge_on: high_severity_finding
+    
+  - pattern: "migrations/"
+    agent: database-optimizer
+    require: index_check
+    
+  - pattern: ".github/workflows/"
+    agent: devops-automator
+    notify: "#deployments"

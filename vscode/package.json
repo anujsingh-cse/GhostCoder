@@ -1,0 +1,86 @@
+{
+  "name": "ghostcoder",
+  "displayName": "GhostCoder",
+  "description": "GhostCoder: An invisible coding partner watching your session and showing inline suggestions.",
+  "version": "0.1.0",
+  "publisher": "ghostcoder",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ghostcoder.enable",
+        "title": "GhostCoder: Enable"
+      },
+      {
+        "command": "ghostcoder.disable",
+        "title": "GhostCoder: Disable"
+      },
+      {
+        "command": "ghostcoder.showLastHint",
+        "title": "GhostCoder: Show Last Hint"
+      },
+      {
+        "command": "ghostcoder.applySuggestion",
+        "title": "GhostCoder: Apply Suggestion"
+      },
+      {
+        "command": "ghostcoder.applySkepticSuggestion",
+        "title": "GhostCoder: Apply Skeptic Suggestion"
+      },
+      {
+        "command": "ghostcoder.dismissSuggestion",
+        "title": "GhostCoder: Dismiss Suggestion"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ghostcoder.applySuggestion",
+        "key": "alt+a",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ghostcoder.applySkepticSuggestion",
+        "key": "alt+s",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ghostcoder.dismissSuggestion",
+        "key": "alt+d",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "GhostCoder",
+      "properties": {
+        "ghostcoder.socketPath": {
+          "type": "string",
+          "default": "~/.ghostcoder/ghostcoder.sock",
+          "description": "Path to GhostCoder Unix socket."
+        },
+        "ghostcoder.fallbackPort": {
+          "type": "number",
+          "default": 48673,
+          "description": "TCP fallback port for Windows."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.7",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^4.9.5"
+  }
+}

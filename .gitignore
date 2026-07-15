@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# VS Code extension
+vscode/out/
+vscode/node_modules/
+
+# Local/System
+.DS_Store
+Thumbs.db
+*.sock
+daemon.pid
+daemon.log
+audit.log
+sessions/
