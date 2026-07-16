@@ -50,19 +50,39 @@ GhostCoder is the first coding assistant that validates its own output.
 
 ---
 
-## Hardware Compatibility & local LLMs
+## Model Agnostic & GPU Auto-Scaling
 
-GhostCoder runs entirely on your local machine. It is designed to work efficiently even on lightweight GPUs (e.g., **NVIDIA GTX 1650 4GB VRAM**):
-1. **Qwen2.5-0.5B (1GB VRAM)**: Kept loaded in memory for fast situation classification.
-2. **Qwen2.5-Coder-1.5B (2GB VRAM)**: Loaded on-demand for code generation, and automatically unloaded after 30 seconds of idle time.
-3. **CPU Fallback**: Gracefully falls back to CPU execution if GPU memory headroom (default 500MB) is exceeded.
+GhostCoder is **completely model-agnostic** and works with any Large Language Model supported by your local Ollama instance (including Llama 3, DeepSeek, Mistral, Qwen, Codellama, etc.).
+
+By default, GhostCoder automatically detects your local GPU resources and dynamically routes requests to the largest model that fits comfortably in your VRAM budget (up to 85% utilization).
+
+### GPU Tiers & Recommendations
+
+| VRAM Capacity | Tier Profile | Classifier Model | Coder Model | Reasoner Model | Skeptic Model |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **< 6 GB** | `entry` | `qwen2.5:0.5b` | `qwen2.5-coder:1.5b` | `qwen2.5-coder:1.5b` | `qwen2.5:0.5b` |
+| **6 - 12 GB** | `mid` | `qwen2.5:0.5b` | `qwen2.5-coder:7b` | `qwen2.5-coder:7b` | `qwen2.5:0.5b` |
+| **12 - 20 GB** | `high` | `qwen2.5:0.5b` | `qwen2.5-coder:14b` | `deepseek-coder:6.7b` | `qwen2.5:3b` |
+| **20 - 48 GB** | `workstation` | `qwen2.5:3b` | `qwen2.5-coder:32b` | `deepseek-coder:33b` | `qwen2.5:7b` |
+| **>= 48 GB** | `datacenter` | `qwen2.5:7b` | `qwen2.5-coder:72b` | `deepseek-coder:33b` | `qwen2.5:14b` |
+
+### Customizing Your Model Configuration
+You can hot-swap any role to run any custom model pulled locally:
+
+```bash
+# Configure coder model to use Llama 3
+ghostcoder config --model-coder llama3:8b
+
+# Configure skeptic model to use Mistral
+ghostcoder config --model-skeptic mistral:7b
+```
 
 ---
 
 ## Quick Start
 
 ### 1. Prerequisites
-Install [Ollama](https://ollama.com/) and pull the models:
+Install [Ollama](https://ollama.com/) and pull the models you want to use. For the default Entry configuration:
 ```bash
 ollama pull qwen2.5:0.5b
 ollama pull qwen2.5-coder:1.5b
