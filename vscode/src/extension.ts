@@ -195,9 +195,22 @@ export function activate(context: vscode.ExtensionContext) {
                     }
 
                     if (sugg.skeptic_blocked) {
-                        markdown.appendMarkdown(`---\n*Press **Alt+S** to apply Skeptic's improved version, or **Alt+D** to dismiss.*`);
+                        markdown.appendMarkdown(`---\n\n`);
+                        if (sugg.skeptic_fix) {
+                            markdown.appendMarkdown(`[⚡ Apply Skeptic Fix](command:ghostcoder.applySkepticSuggestion) | `);
+                        }
+                        markdown.appendMarkdown(`[❌ Dismiss](command:ghostcoder.dismissSuggestion)\n\n`);
+                        markdown.appendMarkdown(`*Press **Alt+S** to apply Skeptic's improved version, or **Alt+D** to dismiss.*`);
                     } else {
-                        markdown.appendMarkdown(`---\n*Press **Alt+A** to apply original recommendation, **Alt+S** to apply Skeptic's version, or **Alt+D** to dismiss.*`);
+                        markdown.appendMarkdown(`---\n\n`);
+                        if (sugg.fix) {
+                            markdown.appendMarkdown(`[⚡ Apply Fix](command:ghostcoder.applySuggestion) | `);
+                        }
+                        if (sugg.skeptic_fix) {
+                            markdown.appendMarkdown(`[⚡ Apply Skeptic Fix](command:ghostcoder.applySkepticSuggestion) | `);
+                        }
+                        markdown.appendMarkdown(`[❌ Dismiss](command:ghostcoder.dismissSuggestion)\n\n`);
+                        markdown.appendMarkdown(`*Press **Alt+A** to apply original recommendation, **Alt+S** to apply Skeptic's version, or **Alt+D** to dismiss.*`);
                     }
                     return new vscode.Hover(markdown);
                 }
@@ -206,7 +219,70 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    context.subscriptions.push(enableCmd, disableCmd, showHintCmd, applyCmd, applySkepticCmd, dismissCmd, hoverProvider);
+    const codeActionProvider = vscode.languages.registerCodeActionsProvider({ scheme: 'file' }, new GhostCodeActionProvider(), {
+        providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]
+    });
+
+    context.subscriptions.push(enableCmd, disableCmd, showHintCmd, applyCmd, applySkepticCmd, dismissCmd, hoverProvider, codeActionProvider);
+}
+
+class GhostCodeActionProvider implements vscode.CodeActionProvider {
+    public provideCodeActions(
+        document: vscode.TextDocument,
+        range: vscode.Range | vscode.Selection,
+        context: vscode.CodeActionContext,
+        token: vscode.CancellationToken
+    ): vscode.ProviderResult<(vscode.Command | vscode.CodeAction)[]> {
+        const decManager = decorationManager;
+        if (!decManager) return [];
+        
+        const sugg = decManager.getActiveSuggestion();
+        const activeLine = decManager.getActiveSuggestionLine();
+        
+        if (sugg && activeLine !== null && (range.start.line === activeLine || range.end.line === activeLine)) {
+            const actions: vscode.CodeAction[] = [];
+            
+            if (sugg.skeptic_blocked) {
+                if (sugg.skeptic_fix) {
+                    const action = new vscode.CodeAction('👻 Apply Skeptic Improved Fix', vscode.CodeActionKind.QuickFix);
+                    action.command = {
+                        command: 'ghostcoder.applySkepticSuggestion',
+                        title: 'Apply Skeptic Improved Fix'
+                    };
+                    action.isPreferred = true;
+                    actions.push(action);
+                }
+            } else {
+                if (sugg.fix) {
+                    const action = new vscode.CodeAction('👻 Apply GhostCoder Fix', vscode.CodeActionKind.QuickFix);
+                    action.command = {
+                        command: 'ghostcoder.applySuggestion',
+                        title: 'Apply GhostCoder Fix'
+                    };
+                    action.isPreferred = true;
+                    actions.push(action);
+                }
+                if (sugg.skeptic_fix) {
+                    const action = new vscode.CodeAction('👻 Apply Skeptic Improved Fix', vscode.CodeActionKind.QuickFix);
+                    action.command = {
+                        command: 'ghostcoder.applySkepticSuggestion',
+                        title: 'Apply Skeptic Improved Fix'
+                    };
+                    actions.push(action);
+                }
+            }
+            
+            const dismissAction = new vscode.CodeAction('👻 Dismiss Suggestion', vscode.CodeActionKind.QuickFix);
+            dismissAction.command = {
+                command: 'ghostcoder.dismissSuggestion',
+                title: 'Dismiss Suggestion'
+            };
+            actions.push(dismissAction);
+            
+            return actions;
+        }
+        return [];
+    }
 }
 
 function connectDaemon() {
