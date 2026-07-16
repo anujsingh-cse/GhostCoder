@@ -82,11 +82,14 @@ class GPUTierDetector:
 
         try:
             # Query nvidia-smi for total VRAM (in MiB) and GPU Name
+            import sys
+            creation_flags = 0x08000000 if sys.platform == "win32" else 0
             res = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                creationflags=creation_flags
             )
             output = res.stdout.strip()
             if not output:

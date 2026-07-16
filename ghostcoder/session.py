@@ -34,11 +34,14 @@ class SessionState:
     def load_git_context(self):
         """Read Git status using subprocess or fallback gracefully."""
         import subprocess
+        import sys
+        creation_flags = 0x08000000 if sys.platform == "win32" else 0
         try:
             # Branch
             branch_proc = subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=self.project_path, capture_output=True, text=True, timeout=2
+                cwd=self.project_path, capture_output=True, text=True, timeout=2,
+                creationflags=creation_flags
             )
             if branch_proc.returncode == 0:
                 self.git_branch = branch_proc.stdout.strip()
@@ -46,7 +49,8 @@ class SessionState:
             # Last commit
             commit_proc = subprocess.run(
                 ["git", "log", "-1", "--pretty=format:%h - %s"],
-                cwd=self.project_path, capture_output=True, text=True, timeout=2
+                cwd=self.project_path, capture_output=True, text=True, timeout=2,
+                creationflags=creation_flags
             )
             if commit_proc.returncode == 0:
                 self.git_last_commit = commit_proc.stdout.strip()
@@ -54,7 +58,8 @@ class SessionState:
             # Status
             status_proc = subprocess.run(
                 ["git", "status", "--short"],
-                cwd=self.project_path, capture_output=True, text=True, timeout=2
+                cwd=self.project_path, capture_output=True, text=True, timeout=2,
+                creationflags=creation_flags
             )
             if status_proc.returncode == 0:
                 self.git_status = status_proc.stdout.strip()
