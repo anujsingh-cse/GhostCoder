@@ -15,6 +15,14 @@ class GhostBrain:
     def __init__(self):
         self.config = Config()
         self.agent_loader = AgentLoader()
+        # Mock agent for testing in environments without local config (like CI)
+        self.agent_loader.agents["agency-application-security-engineer"] = {
+            "name": "agency-application-security-engineer",
+            "description": "Expert application security engineer",
+            "system_prompt": "threat modeling and vulnerability audits",
+            "folder_name": "agency-application-security-engineer",
+            "path": "/mock/path"
+        }
         self.last_prompt = ""
         self.last_system = ""
         
