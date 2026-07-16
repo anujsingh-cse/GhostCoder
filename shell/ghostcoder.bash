@@ -6,9 +6,13 @@ source "${GHOSTCODER_DIR}/ghostcoder.sh"
 
 GHOSTCODER_LAST_CMD=""
 GHOSTCODER_IN_CMD=0
+GHOSTCODER_INSIDE_HOOK=0
 
 ghostcoder_preexec() {
     [ -n "$COMP_LINE" ] && return  # Skip autocomplete runs
+    [ "$GHOSTCODER_INSIDE_HOOK" -eq 1 ] && return
+    GHOSTCODER_INSIDE_HOOK=1
+    
     GHOSTCODER_LAST_CMD="$1"
     GHOSTCODER_IN_CMD=1
     
@@ -18,10 +22,15 @@ ghostcoder_preexec() {
         "$(python -c 'import sys, json; print(json.dumps(sys.argv[1]))' "$GHOSTCODER_LAST_CMD")" \
         "$(python -c 'import sys, json; print(json.dumps(sys.argv[1]))' "$PWD")")
     ghostcoder_send "$payload"
+    
+    GHOSTCODER_INSIDE_HOOK=0
 }
 
 ghostcoder_precmd() {
     local exit_code=$?
+    [ "$GHOSTCODER_INSIDE_HOOK" -eq 1 ] && return
+    GHOSTCODER_INSIDE_HOOK=1
+    
     if [ "$GHOSTCODER_IN_CMD" -eq 1 ]; then
         GHOSTCODER_IN_CMD=0
         
@@ -37,6 +46,8 @@ ghostcoder_precmd() {
         # Display inline suggestion if one is active
         ghostcoder_show_hint
     fi
+    
+    GHOSTCODER_INSIDE_HOOK=0
 }
 
 ghostcoder_show_hint() {
