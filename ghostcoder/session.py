@@ -3,6 +3,7 @@ import time
 import json
 import hashlib
 import pathlib
+import threading
 from typing import Dict, List, Any, Optional
 
 class SessionState:
@@ -21,6 +22,7 @@ class SessionState:
         self.git_status: str = ""
         self.active_agents: List[str] = []
         self.current_task: str = "Idle"
+        self._lock = threading.Lock()
 
         self._ensure_session_dir()
         self.load_git_context()
@@ -98,22 +100,29 @@ class SessionState:
 
     def save(self):
         """Serialize session data to JSON."""
-        session_file = os.path.join(self.sessions_dir, f"{self.timestamp}.json")
-        data = {
-            "project_path": self.project_path,
-            "project_hash": self.project_hash,
-            "timestamp": self.timestamp,
-            "commands": self.commands,
-            "errors": self.errors,
-            "open_files": self.open_files,
-            "git_branch": self.git_branch,
-            "git_last_commit": self.git_last_commit,
-            "git_status": self.git_status,
-            "active_agents": self.active_agents,
-            "current_task": self.current_task
-        }
-        try:
-            with open(session_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            print(f"Error saving session state: {e}")
+        with self._lock:
+            session_file = os.path.join(self.sessions_dir, f"{self.timestamp}.json")
+            # Copy mutable lists/dicts to prevent race changes during dumps iteration
+            commands_copy = list(self.commands)
+            errors_copy = list(self.errors)
+            open_files_copy = dict(self.open_files)
+            active_agents_copy = list(self.active_agents)
+            
+            data = {
+                "project_path": self.project_path,
+                "project_hash": self.project_hash,
+                "timestamp": self.timestamp,
+                "commands": commands_copy,
+                "errors": errors_copy,
+                "open_files": open_files_copy,
+                "git_branch": self.git_branch,
+                "git_last_commit": self.git_last_commit,
+                "git_status": self.git_status,
+                "active_agents": active_agents_copy,
+                "current_task": self.current_task
+            }
+            try:
+                with open(session_file, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            except Exception as e:
+                print(f"Error saving session state: {e}")
