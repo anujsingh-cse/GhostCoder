@@ -63,6 +63,12 @@ class GhostCoderDaemon:
         logging.getLogger("urllib3").setLevel(logging.WARNING)
 
     def setup_file_watcher(self):
+        if self.observer:
+            try:
+                self.observer.stop()
+                self.observer.join()
+            except Exception:
+                pass
         try:
             self.observer = Observer()
             watcher = FileWatcher(self.handle_file_change)
@@ -73,6 +79,7 @@ class GhostCoderDaemon:
             logging.error(f"Failed to start file watcher: {e}")
 
     async def process_and_broadcast_suggestion(self, sugg: Dict[str, Any], file_content: str = "", context_info: str = ""):
+        self.last_suggestion = sugg
         # First check safety guardrail
         sugg = SafetyGuardrail.check_suggestion(sugg)
         if sugg.get("blocked"):
@@ -270,6 +277,7 @@ class GhostCoderDaemon:
             content = data.get("content", "")
             line_idx = data.get("line", 0)
             if file and content:
+                self.last_focused_file = file
                 self.session.update_file_hash(file, content)
                 
                 # Get active line content
@@ -312,10 +320,18 @@ class GhostCoderDaemon:
                 self.session.save()
             
             if action in ["apply", "apply_skeptic"]:
+                agent = self.last_suggestion.get("agent", "unknown") if getattr(self, "last_suggestion", None) else "unknown"
+                hint = self.last_suggestion.get("hint", "") if getattr(self, "last_suggestion", None) else ""
+                fix_code = ""
+                if getattr(self, "last_suggestion", None):
+                    fix_code = self.last_suggestion.get("skeptic_fix" if action == "apply_skeptic" else "fix") or ""
                 self.replay.log_event("fix_applied", {
                     "file": self.get_last_modified_file(),
                     "timestamp": time.time(),
-                    "version": "skeptic" if action == "apply_skeptic" else "original"
+                    "version": "skeptic" if action == "apply_skeptic" else "original",
+                    "agent": agent,
+                    "hint": hint,
+                    "fix": fix_code
                 })
             elif action == "dismiss":
                 self.replay.log_event("fix_dismissed", {
@@ -340,6 +356,8 @@ class GhostCoderDaemon:
             asyncio.create_task(self.shutdown())
 
     def get_last_modified_file(self) -> str:
+        if getattr(self, "last_focused_file", None):
+            return self.last_focused_file
         if self.session.open_files:
             return list(self.session.open_files.keys())[-1]
         return ""
