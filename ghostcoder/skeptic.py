@@ -56,8 +56,9 @@ class GhostSkeptic:
             "}"
         )
         
+        model = getattr(self.config, "skeptic_model", None) or getattr(self.config, "classifier_model", "qwen2.5:0.5b")
         payload = {
-            "model": self.config.classifier_model,
+            "model": model,
             "prompt": prompt,
             "system": system_prompt,
             "stream": False,

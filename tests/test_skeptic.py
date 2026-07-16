@@ -6,6 +6,7 @@ from ghostcoder.skeptic import GhostSkeptic, SkepticChallenge
 class MockConfig:
     def __init__(self):
         self.classifier_model = "qwen2.5:0.5b"
+        self.skeptic_model = "qwen2.5:0.5b"
         self.skeptic = True
 
 class MockModelManager:

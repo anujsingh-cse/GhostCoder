@@ -328,6 +328,13 @@ class GhostCoderDaemon:
             writer.write((json.dumps(status_data) + "\n").encode("utf-8"))
             await writer.drain()
 
+        elif msg_type == "reload_config":
+            self.config.load()
+            logging.info("Configuration reloaded in daemon. Model mappings updated.")
+            await self.model_manager.ensure_classifier_loaded()
+            writer.write(json.dumps({"status": "ok", "message": "Config reloaded"}).encode("utf-8") + b"\n")
+            await writer.drain()
+
         elif msg_type == "shutdown":
             logging.info("Shutdown requested via IPC client.")
             asyncio.create_task(self.shutdown())
@@ -352,10 +359,19 @@ class GhostCoderDaemon:
         vram = await self.model_manager.get_vram_usage_mb()
         stack = ProjectDetector.detect_stack(self.session.project_path)
         
+        from .backends.gpu_tier import GPUTierDetector
+        gpu_info = GPUTierDetector.detect()
+        
         return {
             "status": "running",
             "classifier_model": self.config.classifier_model,
             "coder_model": self.config.coder_model,
+            "reasoner_model": self.config.reasoner_model,
+            "skeptic_model": self.config.skeptic_model,
+            "gpu_name": gpu_info.name,
+            "gpu_vram_gb": gpu_info.vram_gb,
+            "gpu_tier": self.config.gpu_tier,
+            "detected_gpu_tier": gpu_info.tier,
             "loaded_models": [m.get("name") for m in loaded],
             "vram_usage_mb": vram,
             "project_path": self.session.project_path,
@@ -542,8 +558,14 @@ async def send_ipc_status():
         
         print("--- GHOSTCODER DAEMON STATUS ---")
         print(f"Status:             {status_data.get('status')}")
+        print(f"GPU Name:           {status_data.get('gpu_name', 'Unknown')}")
+        print(f"GPU VRAM:           {status_data.get('gpu_vram_gb', 0.0):.1f} GB")
+        print(f"Configured Tier:    {status_data.get('gpu_tier', 'auto')}")
+        print(f"Detected Tier:      {status_data.get('detected_gpu_tier', 'unknown')}")
         print(f"Classifier Model:   {status_data.get('classifier_model')}")
         print(f"Code Generator:     {status_data.get('coder_model')}")
+        print(f"Reasoner Model:     {status_data.get('reasoner_model')}")
+        print(f"Skeptic Model:      {status_data.get('skeptic_model')}")
         print(f"Active Models:      {', '.join(status_data.get('loaded_models', [])) or 'None'}")
         print(f"VRAM Consumption:   {status_data.get('vram_usage_mb', 0.0):.1f} MB")
         print(f"Current Path:       {status_data.get('project_path')}")
@@ -658,9 +680,34 @@ def run_scenario_test(scenario: Optional[str]):
         print("Mapped agent: agency-senior-developer")
         print("Scenario verification: SUCCESS")
 
+async def notify_daemon_reload():
+    config = Config()
+    socket_path = config.socket_path
+    
+    writer = None
+    try:
+        reader, writer = await asyncio.open_unix_connection(socket_path)
+    except Exception:
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", config.fallback_port)
+        except Exception:
+            return
+
+    try:
+        writer.write(json.dumps({"type": "reload_config"}).encode("utf-8") + b"\n")
+        await writer.drain()
+        await reader.readline()
+        print("Running GhostCoder Daemon notified of config changes. Models hot-swapped.")
+    except Exception as e:
+        print(f"Could not notify running daemon: {e}")
+    finally:
+        if writer:
+            writer.close()
+            await writer.wait_closed()
+
 def main():
     parser = argparse.ArgumentParser(description="GhostCoder Daemon & CLI controller")
-    parser.add_argument("command", choices=["init", "status", "logs", "stop", "start", "analyze", "version", "test", "replay", "explain", "report", "skeptic"], nargs="?", default="status")
+    parser.add_argument("command", choices=["init", "status", "logs", "stop", "start", "analyze", "version", "test", "replay", "explain", "report", "skeptic", "config", "models"], nargs="?", default="status")
     parser.add_argument("--run", action="store_true", help="Start the daemon foreground event loop directly.")
     parser.add_argument("--version", "-v", action="store_true", help="Show version.")
     parser.add_argument("--daemon", action="store_true", help="Start in background daemon mode (ignored, default).")
@@ -668,6 +715,17 @@ def main():
     parser.add_argument("--project", type=str, help="Project directory.")
     parser.add_argument("--scenario", type=str, help="Scenario to run test for.")
     
+    # Config overrides
+    parser.add_argument("--gpu-tier", type=str, help="Set GPU tier override.")
+    parser.add_argument("--model-classifier", type=str, help="Override classifier model.")
+    parser.add_argument("--model-coder", type=str, help="Override coder model.")
+    parser.add_argument("--model-reasoner", type=str, help="Override reasoner model.")
+    parser.add_argument("--model-skeptic", type=str, help="Override skeptic model.")
+    
+    # Models flags
+    parser.add_argument("--available", action="store_true", help="Show available local models.")
+    parser.add_argument("--recommended", action="store_true", help="Show recommended models for GPU.")
+
     # Ghost Skeptic arguments
     parser.add_argument("--off", action="store_true", help="Turn off skeptic validation.")
     parser.add_argument("--on", action="store_true", help="Turn on skeptic validation.")
@@ -682,7 +740,7 @@ def main():
     if args.version or args.command == "version":
         print("0.1.0")
         return
- 
+  
     if args.run:
         config = Config()
         daemon = GhostCoderDaemon(config)
@@ -691,7 +749,65 @@ def main():
         except KeyboardInterrupt:
             pass
         return
- 
+  
+    if args.command == "config":
+        config = Config()
+        changed = False
+        if args.gpu_tier is not None:
+            config.data["gpu_tier"] = args.gpu_tier
+            changed = True
+        if args.model_classifier is not None:
+            config.data["model_classifier"] = args.model_classifier
+            changed = True
+        if args.model_coder is not None:
+            config.data["model_coder"] = args.model_coder
+            changed = True
+        if args.model_reasoner is not None:
+            config.data["model_reasoner"] = args.model_reasoner
+            changed = True
+        if args.model_skeptic is not None:
+            config.data["model_skeptic"] = args.model_skeptic
+            changed = True
+            
+        if changed:
+            config.save()
+            print("Configuration updated.")
+            asyncio.run(notify_daemon_reload())
+        else:
+            print("GhostCoder configuration overrides:")
+            print(f"gpu_tier:         {config.data.get('gpu_tier')}")
+            print(f"model_classifier: {config.data.get('model_classifier') or '(auto)'}")
+            print(f"model_coder:      {config.data.get('model_coder') or '(auto)'}")
+            print(f"model_reasoner:   {config.data.get('model_reasoner') or '(auto)'}")
+            print(f"model_skeptic:    {config.data.get('model_skeptic') or '(auto)'}")
+        return
+
+    if args.command == "models":
+        config = Config()
+        manager = ModelManager(config)
+        if args.available:
+            print("Locally available (pulled) models in Ollama:")
+            local_models = asyncio.run(manager.get_local_models())
+            if not local_models:
+                print("No local models found. Is Ollama running?")
+            else:
+                for m in local_models:
+                    size_gb = m.get("size", 0) / (1024.0 * 1024.0 * 1024.0)
+                    print(f"- {m.get('name')} ({size_gb:.2f} GB)")
+        elif args.recommended:
+            from .backends.gpu_tier import GPUTierDetector, MODEL_PRESETS
+            gpu_info = GPUTierDetector.detect()
+            print(f"Detected GPU:      {gpu_info.name}")
+            print(f"VRAM Capacity:     {gpu_info.vram_gb:.1f} GB")
+            print(f"GPU Tier:          {gpu_info.tier.upper()} (Max model size: {gpu_info.max_model_size}B)")
+            print("\nRecommended models for this tier:")
+            presets = MODEL_PRESETS.get(gpu_info.tier, MODEL_PRESETS["entry"])
+            for role, model in presets.items():
+                print(f"- {role:12}: {model}")
+        else:
+            print("Please specify a flag: --available or --recommended")
+        return
+
     if args.command == "skeptic":
         config = Config()
         if args.on:
@@ -706,15 +822,15 @@ def main():
             status = "enabled" if config.skeptic else "disabled"
             print(f"Ghost Skeptic is currently {status}.")
         return
-
+ 
     if args.command == "analyze":
         run_analysis(args.file or "", args.project)
         return
- 
+  
     if args.command == "test":
         run_scenario_test(args.scenario)
         return
-
+ 
     if args.command in ["replay", "explain", "report"]:
         from .replay import GhostReplay
         replay = GhostReplay()

@@ -1,6 +1,7 @@
 import os
 import pathlib
 import yaml
+from typing import Optional
 
 DEFAULT_CONFIG = {
     "ollama_url": "http://localhost:11434",
@@ -14,6 +15,11 @@ DEFAULT_CONFIG = {
     "skeptic": True,
     "gemini_api_key": "",
     "use_gemini_fallback": False,
+    "gpu_tier": "auto",
+    "model_classifier": "",
+    "model_coder": "",
+    "model_reasoner": "",
+    "model_skeptic": "",
     "agent_mappings": {
         "errors": [
             {"pattern": "FAILED tests/", "agents": ["agency-reality-checker", "agency-senior-developer"]},
@@ -47,24 +53,61 @@ DEFAULT_CONFIG = {
 
 class Config:
     def __init__(self, config_path=None):
-        self.config_path = config_path or os.path.expanduser("~/.ghostcoder/config.yaml")
         self.data = DEFAULT_CONFIG.copy()
+        self.global_config_path = os.path.expanduser("~/.ghostcoder/config.yaml")
+        self.local_config_path = self._find_local_config()
+        
+        if config_path:
+            self.config_path = config_path
+        else:
+            self.config_path = self.local_config_path or self.global_config_path
+            
         self.load()
 
+    def _find_local_config(self) -> Optional[str]:
+        # Walk up to find .ghostcoder/config.yml or config.yaml
+        try:
+            curr = pathlib.Path(os.getcwd()).resolve()
+            for parent in [curr] + list(curr.parents):
+                for filename in ["config.yml", "config.yaml"]:
+                    p = parent / ".ghostcoder" / filename
+                    if p.exists() and p.is_file():
+                        return str(p)
+        except Exception:
+            pass
+        return None
+
     def load(self):
-        path = pathlib.Path(self.config_path)
-        if path.exists():
+        # 1. Load global
+        global_path = pathlib.Path(self.global_config_path)
+        if global_path.exists():
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(global_path, "r", encoding="utf-8") as f:
                     user_data = yaml.safe_load(f)
                     if user_data:
                         self._merge(self.data, user_data)
             except Exception as e:
-                print(f"Error loading config file: {e}")
+                print(f"Error loading global config: {e}")
         else:
-            # Ensure folder exists
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self.save()
+            # Create global directory and file on first run
+            try:
+                global_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(global_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(DEFAULT_CONFIG, f)
+            except Exception:
+                pass
+
+        # 2. Load local
+        if self.local_config_path:
+            local_path = pathlib.Path(self.local_config_path)
+            if local_path.exists():
+                try:
+                    with open(local_path, "r", encoding="utf-8") as f:
+                        user_data = yaml.safe_load(f)
+                        if user_data:
+                            self._merge(self.data, user_data)
+                except Exception as e:
+                    print(f"Error loading local config: {e}")
 
     def _merge(self, base, update):
         for k, v in update.items():
@@ -107,13 +150,66 @@ class Config:
     def coder_idle_timeout(self):
         return self.data.get("coder_idle_timeout", 30.0)
 
+    def resolve_model(self, role: str) -> str:
+        # 1. Check for manual override in config
+        override_key = f"model_{role}"
+        if self.data.get(override_key):
+            return self.data[override_key]
+        
+        # 2. Check for backward compatibility with old config keys
+        if role == "classifier" and self.data.get("classifier_model"):
+            if self.data["classifier_model"] != DEFAULT_CONFIG["classifier_model"]:
+                return self.data["classifier_model"]
+        if role == "coder" and self.data.get("coder_model"):
+            if self.data["coder_model"] != DEFAULT_CONFIG["coder_model"]:
+                return self.data["coder_model"]
+
+        # 3. Detect GPU and use preset
+        from .backends.gpu_tier import GPUTierDetector, MODEL_PRESETS
+        
+        configured_tier = self.gpu_tier
+        if configured_tier == "auto":
+            gpu_info = GPUTierDetector.detect()
+            configured_tier = gpu_info.tier
+            
+        presets = MODEL_PRESETS.get(configured_tier, MODEL_PRESETS["entry"])
+        return presets.get(role, "")
+
+    @property
+    def gpu_tier(self):
+        return self.data.get("gpu_tier", "auto")
+
+    @property
+    def model_classifier(self):
+        return self.data.get("model_classifier", "")
+
+    @property
+    def model_coder(self):
+        return self.data.get("model_coder", "")
+
+    @property
+    def model_reasoner(self):
+        return self.data.get("model_reasoner", "")
+
+    @property
+    def model_skeptic(self):
+        return self.data.get("model_skeptic", "")
+
     @property
     def classifier_model(self):
-        return self.data.get("classifier_model", "qwen2.5:0.5b")
+        return self.resolve_model("classifier")
 
     @property
     def coder_model(self):
-        return self.data.get("coder_model", "qwen2.5-coder:1.5b")
+        return self.resolve_model("coder")
+
+    @property
+    def reasoner_model(self):
+        return self.resolve_model("reasoner")
+
+    @property
+    def skeptic_model(self):
+        return self.resolve_model("skeptic")
 
     @property
     def skeptic(self):

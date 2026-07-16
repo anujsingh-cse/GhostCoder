@@ -13,24 +13,25 @@ class ModelManager:
         self.unload_timer_task: Optional[asyncio.Task] = None
         self.lock = asyncio.Lock()
 
-    async def make_request(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def make_request(self, endpoint: str, data: Dict[str, Any], method: str = "POST") -> Dict[str, Any]:
         """Make an async JSON request to Ollama API."""
         url = f"{self.config.ollama_url.rstrip('/')}{endpoint}"
-        payload = json.dumps(data).encode("utf-8")
+        payload = json.dumps(data).encode("utf-8") if data else None
         
         def _request():
+            headers = {"Content-Type": "application/json"} if payload else {}
             req = urllib.request.Request(
                 url,
                 data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST"
+                headers=headers,
+                method=method
             )
             try:
                 with urllib.request.urlopen(req, timeout=60) as response:
                     return json.loads(response.read().decode("utf-8"))
             except urllib.error.URLError as e:
                 # Attempt GET for endpoints that are GET or handle errors
-                if endpoint == "/api/ps":
+                if endpoint in ["/api/ps", "/api/tags"]:
                     try:
                         req_get = urllib.request.Request(url, method="GET")
                         with urllib.request.urlopen(req_get, timeout=5) as res:
@@ -51,6 +52,50 @@ class ModelManager:
             # If Ollama doesn't support /api/ps or is offline
             return []
 
+    async def get_local_models(self) -> List[Dict[str, Any]]:
+        """Get models currently pulled/available locally in Ollama."""
+        try:
+            res = await self.make_request("/api/tags", {}, method="GET")
+            return res.get("models", [])
+        except Exception:
+            return []
+
+    async def get_model_size_mb(self, model_name: str) -> float:
+        """Estimate or retrieve model memory size in MB."""
+        try:
+            local_models = await self.get_local_models()
+            for m in local_models:
+                name = m.get("name", "")
+                if name == model_name or name.startswith(model_name + ":") or model_name.startswith(name + ":"):
+                    # size is in bytes
+                    return m.get("size", 0) / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+        # Fallbacks for heuristics
+        if "72b" in model_name:
+            return 45000.0
+        elif "32b" in model_name:
+            return 20000.0
+        elif "14b" in model_name:
+            return 9000.0
+        elif "7b" in model_name:
+            return 5000.0
+        elif "3b" in model_name:
+            return 2500.0
+        elif "1.5b" in model_name:
+            return 1200.0
+        return 1000.0
+
+    def get_max_vram_limit_mb(self) -> float:
+        """Calculate maximum VRAM limit (85% default or total - headroom)."""
+        from .backends.gpu_tier import GPUTierDetector
+        gpu_info = GPUTierDetector.detect()
+        if gpu_info.vram_gb == 0.0:
+            return 4096.0 - self.config.vram_headroom_mb
+        total_vram_mb = gpu_info.vram_gb * 1024.0
+        return min(total_vram_mb * 0.85, total_vram_mb - self.config.vram_headroom_mb)
+
     async def get_vram_usage_mb(self) -> float:
         """Calculate currently consumed VRAM by Ollama in MB."""
         models = await self.get_loaded_models()
@@ -63,10 +108,7 @@ class ModelManager:
 
     async def ensure_classifier_loaded(self):
         """Ensure the lightweight classifier model is loaded."""
-        # Qwen2.5:0.5b is kept loaded (default keep_alive is -1 or long time)
         model = self.config.classifier_model
-        # We can trigger a quick load by calling generate with an empty prompt
-        # and a long keep_alive (e.g. keep_alive=-1 or 3600)
         try:
             await self.make_request("/api/generate", {
                 "model": model,
@@ -80,22 +122,19 @@ class ModelManager:
     async def load_coder_model(self):
         """Load the code generation model, checking VRAM budget first."""
         async with self.lock:
-            # Check VRAM
-            # GTX 1650 has 4096MB VRAM. Headroom is config.vram_headroom_mb (500MB).
-            # Max allowed VRAM usage is 3596MB.
-            # Qwen2.5-Coder-1.5B needs about 2000MB (2GB).
-            max_vram = 4096 - self.config.vram_headroom_mb
+            max_vram = self.get_max_vram_limit_mb()
             current_vram = await self.get_vram_usage_mb()
             
-            # If loading Coder (2GB) will exceed max VRAM, we should unload others
-            # or force Ollama execution behavior.
-            if current_vram + 2000 > max_vram:
-                print(f"VRAM budget tight (current: {current_vram}MB, max: {max_vram}MB). Unloading active models to make room.")
-                # Unload everything else by sending keep_alive = 0 to other models
+            coder_model = self.config.coder_model
+            model_size = await self.get_model_size_mb(coder_model)
+            
+            # If loading Coder will exceed max VRAM, we should unload others
+            if current_vram + model_size > max_vram:
+                print(f"VRAM budget tight (current: {current_vram:.1f}MB, model: {model_size:.1f}MB, limit: {max_vram:.1f}MB). Unloading active models to make room.")
                 loaded = await self.get_loaded_models()
                 for m in loaded:
                     name = m.get("name", "")
-                    if name and self.config.coder_model not in name:
+                    if name and coder_model not in name:
                         try:
                             await self.make_request("/api/generate", {
                                 "model": name,
@@ -109,7 +148,7 @@ class ModelManager:
             # Load Coder model
             try:
                 await self.make_request("/api/generate", {
-                    "model": self.config.coder_model,
+                    "model": coder_model,
                     "prompt": "",
                     "stream": False,
                     "keep_alive": "5m"  # Keep alive for 5 minutes (will be unloaded by our idle manager)
